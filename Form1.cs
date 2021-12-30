@@ -196,7 +196,8 @@ namespace Words
             }
             return ngram;
         }
-
+        // No se usa en los cálculos, pero sirve para hacer comprobaciones manuales de la distancia
+        // de un n-grama respecto a una palabra en una frase.
         private int checkNgramDistance(string phrase, string processedGram, string targetWord)
         {
             if (!phrase.Contains(processedGram)) return -1;
