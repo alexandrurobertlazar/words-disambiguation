@@ -11,7 +11,6 @@ namespace Words
 {
     public partial class Form1 : Form
     {
-        private HashSet<String> phrases = new();
         private ConcurrentDictionary<string, ConcurrentQueue<string>> wordsPhrases = new();
         private ConcurrentDictionary<nGram, int> nGramCounts = new();
         Regex wordRegex = new Regex(@"\p{L}*");
@@ -38,26 +37,25 @@ namespace Words
             try
             {
                 // Load files
+                // Aquí se debe especificar la ruta donde se encuentra el fichero con las palabras ambiguas.
+                StreamReader wordsFile = new(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\palabras ambiguas.txt", true);
+                string[] words = wordsFile.ReadToEnd().Split("\r\n");
+                wordsFile.Close();
+                Parallel.ForEach(words, word =>
+                {
+                    wordsPhrases.TryAdd(word, new());
+                });
                 // Aquí se debe especificar la ruta del directorio que tiene los ficheros con las frases.
-                foreach (string file in Directory.EnumerateFiles(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\phrases", "*.txt"))
+                foreach (string file in Directory.EnumerateFiles(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\phrases", "*.txt"))
                 {
                     StreamReader sr = new StreamReader(file);
                     string[] contents = sr.ReadToEnd().Split("\r\n");
-                    this.phrases.UnionWith(contents.ToHashSet());
+                    Parallel.ForEach(contents, phrase =>
+                    {
+                        checkAmbiguousWordsInPhrase(phrase);
+                    });
                     sr.Close();
                 }
-                // Lo mismo aquí, con el fichero de palabras ambiguas.
-                StreamReader wordsFile = new(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\palabras ambiguas.txt", true);
-                string[] words = wordsFile.ReadToEnd().Split("\r\n");
-                wordsFile.Close();
-                foreach (string word in words)
-                {
-                    wordsPhrases.TryAdd(word, new());
-                }
-                Parallel.ForEach(phrases, phrase =>
-                {
-                    checkAmbiguousWordsInPhrase(phrase);
-                });
                 Parallel.ForEach(wordsPhrases.Keys, word =>
                 {
                     if(!wordsPhrases[word].IsEmpty) writeWordsPhrasesToFile(word);
@@ -75,7 +73,7 @@ namespace Words
                     try
                     {
                         // Aquí se especifica la carpeta donde se van a guardar los ficheros con los n-gramas. Solo se debe modificar el contenido del primer string!
-                        StreamWriter sw = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\desambiguacion\" + result.targetWord + "_" + result.orientation + "_" + result.nGramLength + ".txt", append: true);
+                        StreamWriter sw = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\desambiguacion\" + result.targetWord + "_" + result.orientation + "_" + result.nGramLength + ".txt", append: true);
                         sw.WriteLine(result.contents + ":" + result.distance + ":" + nGramCounts[result]);
                         sw.Flush();
                         sw.Close();
@@ -233,7 +231,6 @@ namespace Words
                 if (wordsPhrases.ContainsKey(regexedWord))
                 {
                     wordsPhrases[regexedWord].Enqueue(phrase);
-                    break;
                 }
             }
             return;
@@ -245,7 +242,7 @@ namespace Words
             try
             {
                 // Aquí se debe especificar la carpeta donde se deben guardar los ficheros con las frases de cada palabra. Solo se ha de modificar el primer string.
-                streamWriter = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\words\" + word + ".txt", append: true);
+                streamWriter = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\words\" + word + ".txt", append: true);
                 foreach (string phrase in wordsPhrases[word].Distinct().ToList())
                 {
                     streamWriter.WriteLine(phrase);
