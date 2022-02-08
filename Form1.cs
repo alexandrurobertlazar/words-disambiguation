@@ -38,7 +38,7 @@ namespace Words
             {
                 // Load files
                 // Aquí se debe especificar la ruta donde se encuentra el fichero con las palabras ambiguas.
-                StreamReader wordsFile = new(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\palabras ambiguas.txt", true);
+                StreamReader wordsFile = new(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\palabras ambiguas.txt", true);
                 string[] words = wordsFile.ReadToEnd().Split("\r\n");
                 wordsFile.Close();
                 Parallel.ForEach(words, word =>
@@ -46,7 +46,7 @@ namespace Words
                     wordsPhrases.TryAdd(word, new());
                 });
                 // Aquí se debe especificar la ruta del directorio que tiene los ficheros con las frases.
-                foreach (string file in Directory.EnumerateFiles(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\phrases", "*.txt"))
+                foreach (string file in Directory.EnumerateFiles(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\phrases", "*.txt"))
                 {
                     StreamReader sr = new StreamReader(file);
                     string[] contents = sr.ReadToEnd().Split("\r\n");
@@ -73,7 +73,7 @@ namespace Words
                     try
                     {
                         // Aquí se especifica la carpeta donde se van a guardar los ficheros con los n-gramas. Solo se debe modificar el contenido del primer string!
-                        StreamWriter sw = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\desambiguacion\" + result.targetWord + "_" + result.orientation + "_" + result.nGramLength + ".txt", append: true);
+                        StreamWriter sw = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\desambiguacion\" + result.targetWord + "_" + result.orientation + "_" + result.nGramLength + ".txt", append: true);
                         sw.WriteLine(result.contents + ":" + result.distance + ":" + nGramCounts[result]);
                         sw.Flush();
                         sw.Close();
@@ -129,7 +129,7 @@ namespace Words
             {
                 string[] dividedPhrase = nGramsLeft.ToArray();
                 int nGram = 1;
-                while (true)
+                while (nGram <= 4)
                 {
                     nGram result = processNGram(getNGramAtDistance(i + 1, nGram, dividedPhrase, "left"), targetWord, "left", nGram, i + 1);
                     if (result.contents == "") break;
@@ -137,7 +137,7 @@ namespace Words
                 }
                 dividedPhrase = nGramsRight.ToArray();
                 nGram = 1;
-                while (true)
+                while (nGram <= 4)
                 {
                     nGram result = processNGram(getNGramAtDistance(i + 1, nGram, dividedPhrase, "right"), targetWord, "right", nGram, i + 1);
                     if (result.contents == "") break;
@@ -243,7 +243,7 @@ namespace Words
             try
             {
                 // Aquí se debe especificar la carpeta donde se deben guardar los ficheros con las frases de cada palabra. Solo se ha de modificar el primer string.
-                streamWriter = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\words\" + word + ".txt", append: true);
+                streamWriter = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\words\" + word + ".txt", append: true);
                 foreach (string phrase in wordsPhrases[word].Distinct().ToList())
                 {
                     streamWriter.WriteLine(phrase);
