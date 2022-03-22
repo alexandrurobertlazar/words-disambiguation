@@ -6,14 +6,21 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using ServicioLematizacion;
 
 namespace Words
 {
     public partial class Form1 : Form
     {
+
+        // ConcurrentDictionary<nGram, int> nGramCounts = new();
+        // Aquí se debe especificar la ruta del directorio base.
         private ConcurrentDictionary<string, ConcurrentQueue<string>> wordsPhrases = new();
-        private ConcurrentDictionary<nGram, int> nGramCounts = new();
-        Regex wordRegex = new Regex(@"\p{L}*");
+        private ConcurrentDictionary<string, ConcurrentQueue<string>> wordsPhrasesCanonica = new();
+        private ConcurrentDictionary<string, ConcurrentQueue<string>> wordsPhrasesCategorias = new();
+        private ConcurrentBag<WordPos> wordsPositionsInPhrases = new();
+        private string baseDirectory;
+        Regex wordRegex = new Regex(@"\p{L}+");
         public Form1()
         {
             InitializeComponent();
@@ -22,73 +29,212 @@ namespace Words
         /***
          * 
          * Estructura de directorios:
-         * En el directorio en el que se va a trabajar, deben existir cuatro cosas:
-         * 3 directorios: "desambiguacion", "words" y "phrases"
-         * --> "desambiguacion": Directorio donde se guardan los n-gramas.
-         * --> "words": Directorio donde se almacenan las frases separadas por palabras.
+         * En el directorio en el que se va a trabajar, deben existir tres cosas:
+         * 2 directorios: "desambiguacion" y "phrases"
+         * --> "desambiguacion": Directorio donde se guardan los n-gramas y las frases.
          * --> "phrases": Directorio donde se encuentran las frases con las que se desea tratar. Debe haber mínimo un fichero de frases.
          * 1 fichero: "Palabras ambiguas.txt": Debe contener las palabras a tratar.
-         * 
-         * Al finalizarse el tratamiento de frases/palabras, se ejecuta un formulario, que
-         * indicará el final de las operaciones de tratamiento.
          */
         private void Form1_Load(object sender, EventArgs e)
+        {}
+        /***
+         * Aquí es donde se empieza a trabajar.
+         */
+        async private Task work ()
         {
             try
             {
-                // Load files
-                // Aquí se debe especificar la ruta donde se encuentra el fichero con las palabras ambiguas.
-                StreamReader wordsFile = new(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\palabras ambiguas.txt", true);
+                ServicioLematizacionClient servicioLematizacion = new();
+                progressBar1.Minimum = 0;
+                progressBar1.Value = 0;
+                wordsPhrases = new();
+                label2.Text = "Cargando palabras...";
+                label2.Refresh();
+                StreamReader wordsFile = null;
+                try
+                {
+                    wordsFile = new(baseDirectory + "palabras ambiguas.txt", true);
+                } catch (Exception e)
+                {
+                    label2.Text = "Error: No se han podido cargar las palabas ambiguas. Verifique que el directorio es correcto.";
+                    label2.Refresh();
+                    return;
+                }
                 string[] words = wordsFile.ReadToEnd().Split("\r\n");
                 wordsFile.Close();
-                Parallel.ForEach(words, word =>
+                progressBar1.Maximum = words.Length;
+                progressBar1.Refresh();
+                await Task.Run(() => Parallel.ForEach(words, new ParallelOptions { MaxDegreeOfParallelism = 50 }, word =>
                 {
                     wordsPhrases.TryAdd(word, new());
-                });
-                // Aquí se debe especificar la ruta del directorio que tiene los ficheros con las frases.
-                foreach (string file in Directory.EnumerateFiles(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\phrases", "*.txt"))
+                    if (!Directory.Exists(baseDirectory + @"desambiguación\" + word))
+                    {
+                        Directory.CreateDirectory(baseDirectory + @"desambiguación\" + word);
+                    }
+                    
+                    this.Invoke(new Action(() => progressBar1.Increment(1)));
+                }));
+                progressBar1.Value = 0;
+                progressBar1.Maximum = Directory.EnumerateFiles(baseDirectory + "phrases", "*.txt").Count()*2;
+                progressBar1.Refresh();
+                label2.Text = "Cargando frases...";
+                label2.Refresh();
+                foreach (string file in Directory.EnumerateFiles(baseDirectory + "phrases", "*.txt"))
                 {
                     StreamReader sr = new StreamReader(file);
                     string[] contents = sr.ReadToEnd().Split("\r\n");
-                    Parallel.ForEach(contents, phrase =>
+                    this.Invoke(new Action(() => progressBar1.Increment(1)));
+                    Parallel.ForEach(contents, new ParallelOptions { MaxDegreeOfParallelism = 50 }, phrase =>
                     {
-                        checkAmbiguousWordsInPhrase(phrase);
+                        CheckAmbiguousWordsInPhrase(phrase);
                     });
                     sr.Close();
                 }
-                Parallel.ForEach(wordsPhrases.Keys, word =>
+                // Las categorías las sacamos aquí para no hacer tantas llamadas a la API.
+                Dictionary<int, InfoCategoria> categorias = servicioLematizacion.ConsultaCodigosCategorias();
+
+                // Aquí es donde se lanza la obtención de frases por forma canónica y gramatical.
+                await Task.Run(() => Parallel.ForEach(wordsPhrases.Keys, new ParallelOptions {MaxDegreeOfParallelism = 5}, word =>
                 {
-                    if(!wordsPhrases[word].IsEmpty) writeWordsPhrasesToFile(word);
-                });
-                Parallel.ForEach(wordsPhrases.Keys, word =>
+                    ObtenerFormaCanonicaGramatical(word, categorias);
+                    this.Invoke(new Action(() => progressBar1.Increment(1)));
+                }));
+                label2.Text = "Escribiendo frases en ficheros...";
+                label2.Refresh();
+                progressBar1.Value = 0;
+                progressBar1.Maximum = wordsPhrases.Count;
+                progressBar1.Refresh();
+                await Task.Run(() => Parallel.ForEach(wordsPhrases.Keys, word =>
                 {
+                    if (!wordsPhrases[word].IsEmpty) WriteWordsPhrasesToFile(word, "frases", wordsPhrases);
+                    this.Invoke(new Action(() => progressBar1.Increment(1)));
+                }));
+                await Task.Run(() => Parallel.ForEach(wordsPhrasesCanonica.Keys, word =>
+                {
+                    if (!wordsPhrasesCanonica[word].IsEmpty) WriteWordsPhrasesToFile(word, "frases_lemas", wordsPhrasesCanonica);
+                    this.Invoke(new Action(() => progressBar1.Increment(1)));
+                }));
+                await Task.Run(() => Parallel.ForEach(wordsPhrasesCategorias.Keys, word =>
+                {
+                    if (!wordsPhrasesCategorias[word].IsEmpty) WriteWordsPhrasesToFile(word, "frases_categorias_gramaticales", wordsPhrasesCategorias);
+                    this.Invoke(new Action(() => progressBar1.Increment(1)));
+                }));
+                progressBar1.Value = 0;
+                label2.Text = "Desambiguando...";
+                label2.Refresh();
+                progressBar1.Refresh();
+                await Task.Run(() => Parallel.ForEach(wordsPhrases.Keys, new ParallelOptions { MaxDegreeOfParallelism = 4 }, word =>
+                {
+                    ConcurrentDictionary<nGram, int> nGramCounts = new();
+                    ConcurrentDictionary<nGram, int> nGramCountsCanonicas = new();
+                    ConcurrentDictionary<nGram, int> nGramCountsGramaticales = new();
                     if (wordsPhrases[word].IsEmpty) return;
-                    foreach (string phrase in wordsPhrases[word])
+                    Parallel.ForEach(wordsPhrases[word], new ParallelOptions { MaxDegreeOfParallelism = 4 }, (phrase, state, index) =>
                     {
-                        disambiguate(phrase, word);
-                    }
-                });
-                foreach (nGram result in nGramCounts.Keys)
-                {
-                    try
+                        Disambiguate(nGramCounts, phrase, word);
+                        string[] phraseWords = phrase.Split(" ");
+                        int targetPos = wordsPositionsInPhrases.ToArray()[index].GetPos();
+                    });
+                    foreach (nGram result in nGramCounts.Keys)
                     {
-                        // Aquí se especifica la carpeta donde se van a guardar los ficheros con los n-gramas. Solo se debe modificar el contenido del primer string!
-                        StreamWriter sw = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\desambiguacion\" + result.targetWord + "_" + result.orientation + "_" + result.nGramLength + ".txt", append: true);
-                        sw.WriteLine(result.contents + ":" + result.distance + ":" + nGramCounts[result]);
-                        sw.Flush();
-                        sw.Close();
+                        try
+                        {
+                            StreamWriter sw = new StreamWriter(baseDirectory + @"desambiguación\" + result.targetWord + @"\" + result.targetWord + "_" + result.orientation + "_" + result.nGramLength + ".txt", append: true);
+                            sw.WriteLine(result.contents + ":" + result.distance + ":" + nGramCounts[result]);
+                            sw.Flush();
+                            sw.Close();
+                        }
+                        catch (Exception ex)
+                        {
+                            this.Invoke(new Action(() => label2.Text = "Ha habido un problema al procesar el n-grama: " + result));
+                            return;
+                        }
                     }
-                    catch (Exception ex) { }
-                }
-                label1.Text = "Todas las palabras y frases se han procesado.";
+                    this.Invoke(new Action(() => { progressBar1.Increment(1); label3.Text = "Última palabra desambiguada: " + word; }));
+                }));
+                label2.Text = "Todas las palabras y frases se han procesado.";
             }
             catch (Exception ex)
             {
-                label1.Text = ex.Message;
+                label2.Text = ex.Message;
+            }
+        }
+        // esto es simplemente un enumerable que permite ajustar el tamaño del incremento para ser usado en un Parallel.forEach
+        static class BetterEnumerable
+        {
+            public static IEnumerable<int> SteppedRange(int fromInclusive, int toExclusive, int step)
+            {
+                for (var i = fromInclusive; i < toExclusive; i += step)
+                {
+                    yield return i;
+                }
             }
         }
 
-        private void disambiguate(string phrase, string targetWord, int occurrence = 1)
+        private void ObtenerFormaCanonicaGramatical(string word, Dictionary<int, InfoCategoria> categorias)
+        {
+            // Ya que obtener muchas frases de una vez tarda mucho tiempo,
+            // he optado por obtenerlas de 50 en 50, en 10 hilos diferentes
+            // (tal como acordamos en la reunión del pasado miércoles)
+            Parallel.ForEach(BetterEnumerable.SteppedRange(0, wordsPhrases[word].Count, 50), new ParallelOptions {MaxDegreeOfParallelism = 10}, (index) =>
+            {
+                ServicioLematizacionClient servicio = new();
+                List<ParamtextFrase> infoFrases = new();
+                List<ParamtextFrase> frasesResueltas = new();
+                List<string> phraseCollection = wordsPhrases[word].Skip(index).Take(50).ToList();
+                foreach (string phrase in phraseCollection)
+                {
+                    string[] phraseContents = phrase.Split(" ");
+                    ParamtextFrase str = CreateParamtextFrase(phrase, phraseContents.Select(x => x.ToString().Trim()).Where(x => x != "").ToList());
+                    infoFrases.Add(str);
+                }
+                frasesResueltas = servicio.ReconocerLinguakit(infoFrases,"es",false);
+                ConcurrentQueue<string> frasesCanónicas = new();
+                ConcurrentQueue<string> frasesCategorías = new();
+                foreach (ParamtextFrase frase in frasesResueltas)
+                {
+                    string fraseCanonicas = "";
+                    string fraseCategorias = "";
+                    for (int i = 0; i < frase.Palabras.Count; i++)
+                    {
+                        if (frase.Palabras[i].InformacionMorfologica != null)
+                        {
+                            fraseCanonicas += frase.Palabras[i].InformacionMorfologica[0].InfoCanonica.FormaCanonica + " ";
+                            fraseCategorias += categorias[frase.Palabras[i].InformacionMorfologica[0].InfoCanonica.IdCategoria].CategoriaAbrevEs + "#";
+                        }
+                        else
+                        {
+                            fraseCanonicas += frase.Palabras[i].Palabra + " ";
+                            fraseCategorias += "desc." + "#";
+                        }
+                    }
+                    frasesCanónicas.Enqueue(fraseCanonicas.Trim());
+                    frasesCategorías.Enqueue(fraseCategorias.Trim());
+                }
+                if (wordsPhrasesCanonica.ContainsKey(word))
+                {
+                    foreach (string frase in frasesCanónicas)
+                    {
+                        wordsPhrasesCanonica[word].Enqueue(frase);
+                    }
+                } else
+                {
+                    wordsPhrasesCanonica.TryAdd(word, frasesCanónicas);
+                }
+                if (wordsPhrasesCategorias.ContainsKey(word))
+                {
+                    foreach (string frase in frasesCategorías)
+                    {
+                        wordsPhrasesCategorias[word].Enqueue(frase);
+                    }
+                }
+                else
+                {
+                    wordsPhrasesCategorias.TryAdd(word, frasesCategorías);
+                }
+            });
+        }
+        private void Disambiguate(ConcurrentDictionary<nGram, int> nGramCounts, string phrase, string targetWord, int occurrence = 1)
         {
             List<string> nGramsLeft = new();
             List<string> nGramsRight = new();
@@ -102,7 +248,7 @@ namespace Words
             int qtyTargetWords = Regex.Matches(phrase, @"\b(?i)" + targetWord + @"\b").Count;
             if (qtyTargetWords > 1 && occurrence < qtyTargetWords)
             {
-                disambiguate(phrase, targetWord, occurrence+1);
+                Disambiguate(nGramCounts, phrase, targetWord, occurrence+1);
             }
             bool flagFound = false;
             foreach (string word in phraseParts)
@@ -131,7 +277,7 @@ namespace Words
                 int nGram = 1;
                 while (nGram <= 4)
                 {
-                    nGram result = processNGram(getNGramAtDistance(i + 1, nGram, dividedPhrase, "left"), targetWord, "left", nGram, i + 1);
+                    nGram result = ProcessNGram(GetNGramAtDistance(i + 1, nGram, dividedPhrase, "left"), targetWord, "left", nGram, i + 1, nGramCounts);
                     if (result.contents == "") break;
                     nGram++;
                 }
@@ -139,14 +285,14 @@ namespace Words
                 nGram = 1;
                 while (nGram <= 4)
                 {
-                    nGram result = processNGram(getNGramAtDistance(i + 1, nGram, dividedPhrase, "right"), targetWord, "right", nGram, i + 1);
+                    nGram result = ProcessNGram(GetNGramAtDistance(i + 1, nGram, dividedPhrase, "right"), targetWord, "right", nGram, i + 1, nGramCounts);
                     if (result.contents == "") break;
                     nGram++;
                 }
             }
             return;
         }
-        private string getNGramAtDistance(int distance, int nGram, string[] dividedPhrase, string orientation)
+        private string GetNGramAtDistance(int distance, int nGram, string[] dividedPhrase, string orientation)
         {
             string result = "";
             int count = 0;
@@ -182,7 +328,7 @@ namespace Words
             }
             return result.Trim();
         }
-        private nGram processNGram(string processedGram, string targetWord, string orientation, int nGram, int distance)
+        private nGram ProcessNGram(string processedGram, string targetWord, string orientation, int nGram, int distance, ConcurrentDictionary<nGram, int> nGramCounts)
         {
             bool resultExists = false;
             nGram ngram = new nGram(distance, processedGram.Trim(), nGram, targetWord.ToLower(), orientation == "left" ? "izq" : "der");
@@ -196,55 +342,32 @@ namespace Words
             }
             return ngram;
         }
-        // No se usa en los cálculos, pero sirve para hacer comprobaciones manuales de la distancia
-        // de un n-grama respecto a una palabra en una frase.
-        private int checkNgramDistance(string phrase, string processedGram, string targetWord)
-        {
-            if (!phrase.Contains(processedGram)) return -1;
-            int distance = 1;
-            string[] splitByNgram = phrase.Split(processedGram);
-            if (splitByNgram[0].Contains(targetWord))
-            {
-                string[] separatedWords = splitByNgram[0].Trim().Split(" ");
-                for (int i = separatedWords.Length - 1; i >= 0; i--)
-                {
-                    if (separatedWords[i] == targetWord) break;
-                    distance++;
-                }
-            }
-            else if (splitByNgram[1].Contains(targetWord))
-            {
-                string[] separatedWords = splitByNgram[1].Trim().Split(" ");
-                for (int i = 0; i < separatedWords.Length; i++)
-                {
-                    if (separatedWords[i] == targetWord) break;
-                    distance++;
-                }
-            }
-            return distance;
-        }
-        private void checkAmbiguousWordsInPhrase(string phrase)
+        private void CheckAmbiguousWordsInPhrase(string phrase)
         {
             string[] phraseWords = phrase.Split(" ");
-            foreach (string word in phraseWords)
+            for (int i = 0; i < phraseWords.Length; i++)
             {
+                string word = phraseWords[i];
                 string regexedWord = wordRegex.Match(word).ToString().ToLower();
                 if (wordsPhrases.ContainsKey(regexedWord))
                 {
-                    wordsPhrases[regexedWord].Enqueue(phrase);
+                    wordsPositionsInPhrases.Add(new WordPos(regexedWord, i));
+                    if (!wordsPhrases[regexedWord].Contains(phrase))
+                    {
+                        wordsPhrases[regexedWord].Enqueue(phrase);
+                    }
                 }
             }
             return;
         }
 
-        private void writeWordsPhrasesToFile(string word)
+        private void WriteWordsPhrasesToFile(string word, string fileName, ConcurrentDictionary<string, ConcurrentQueue<string>> targetDict)
         {
             StreamWriter streamWriter = null;
             try
             {
-                // Aquí se debe especificar la carpeta donde se deben guardar los ficheros con las frases de cada palabra. Solo se ha de modificar el primer string.
-                streamWriter = new StreamWriter(@"C:\Users\Alexandru\Desktop\Beca Colaboración\FRASES\test\words\" + word + ".txt", append: true);
-                foreach (string phrase in wordsPhrases[word].Distinct().ToList())
+                streamWriter = new StreamWriter(baseDirectory + @"desambiguación\" + word + @"\" + fileName + ".txt", append: true);
+                foreach (string phrase in targetDict[word].ToList())
                 {
                     streamWriter.WriteLine(phrase);
                 }
@@ -259,6 +382,37 @@ namespace Words
                 if (streamWriter != null) streamWriter.Close();
             }
             return;
+        }
+
+        private void Button2_Click(object sender, EventArgs e)
+        {
+            DialogResult result = folderBrowserDialog1.ShowDialog();
+            if (result == DialogResult.OK)
+            {
+                baseDirectory = folderBrowserDialog1.SelectedPath + @"\";
+                textBox1.Text = baseDirectory;
+                button1.Enabled = true;
+            }
+        }
+
+        private async void Button1_Click(object sender, EventArgs e)
+        {
+            await work();
+        }
+        private ParamtextFrase CreateParamtextFrase(string sentenceText, List<string> palabras)
+        {
+            ParamtextFrase frase = new ParamtextFrase();
+            frase.Frase = sentenceText;
+            frase.Palabras = palabras.Select(x => CreateParamtextPalabra(x)).ToList();
+            return frase;
+        }
+
+        private ParamtextPalabra CreateParamtextPalabra(string palabra)
+        {
+            string matchedPalabra = wordRegex.Match(palabra.ToLower()).ToString().ToLower();
+            ParamtextPalabra ParamtextPalabra = new ParamtextPalabra();
+            ParamtextPalabra.Palabra = matchedPalabra;
+            return ParamtextPalabra;
         }
     }
 }
